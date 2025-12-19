@@ -9,7 +9,8 @@ use crate::{
         },
     },
 };
-use num_bigint::BigUint as big_uint;
+use num_bigint::{BigUint as big_uint, BigUint};
+use num_integer::Integer;
 use num_traits::{Num, One, Zero};
 use std::{
     cell::RefCell,
@@ -62,6 +63,13 @@ pub fn compose(input: Vec<big_uint>, bit_len: usize) -> big_uint {
         .iter()
         .rev()
         .fold(big_uint::zero(), |acc, val| (acc << bit_len) + val)
+}
+
+pub fn is_negative<F: PrimeField>(x: F) -> bool {
+    let fr_modulus = modulus::<F>();
+    let fr_half = fr_modulus.div_floor(&BigUint::from(2u32));
+    let x_bigint = fe_to_big(x);
+    x_bigint > fr_half
 }
 
 pub fn mock_prover_verify<F: FromUniformBytes<64> + Ord, C: Circuit<F>>(

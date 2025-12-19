@@ -12,7 +12,7 @@ use crate::{
 };
 use halo2wrong::{
     curves::ff::PrimeField,
-    utils::{decompose, power_of_two},
+    utils::{decompose, is_negative, power_of_two},
     RegionCtx,
 };
 use std::iter;
@@ -682,6 +682,69 @@ pub trait MainGateInstructions<F: PrimeField, const WIDTH: usize>: Chip<F> {
         self.assert_equal_to_constant(ctx, a, F::ONE)
     }
 
+    /// Assigns a new bit flag to `1` if `a < b`, otherwise assigns `0`
+    fn is_less(
+        &self,
+        ctx: &mut RegionCtx<'_, F>,
+        a: &AssignedValue<F>,
+        b: &AssignedValue<F>,
+        abs_diff_upp_bit_count: usize,
+    ) -> Result<AssignedCondition<F>, Error> {
+        let cond = a.value().zip(b.value()).map(|(a, b)| {
+            let diff = *a - *b;
+            if is_negative(diff) {
+                F::ONE
+            } else {
+                F::ZERO
+            }
+        });
+
+        // a < b  <==> b - a - 1 >= 0
+        // a >= b <==> a - b >= 0
+        let cond: AssignedCondition<F> = self.assign_value(ctx, cond)?;
+        let x0 = self.sub_with_constant(ctx, b, a, -F::ONE)?;
+        let x1 = self.sub(ctx, a, b)?;
+        let x = self.select(ctx, &x0, &x1, &cond)?;
+
+        let _ = self.to_bits(ctx, &x, abs_diff_upp_bit_count)?;
+
+        Ok(cond)
+    }
+
+    /// Assigns a new bit flag to `1` if `a <= b`, otherwise assigns `0`
+    fn is_less_eq(
+        &self,
+        ctx: &mut RegionCtx<'_, F>,
+        a: &AssignedValue<F>,
+        b: &AssignedValue<F>,
+        abs_diff_upp_bit_count: usize,
+    ) -> Result<AssignedCondition<F>, Error> {
+        let cond = self.is_less(ctx, b, a, abs_diff_upp_bit_count)?;
+        self.not(ctx, &cond)
+    }
+
+    /// Assigns a new bit flag to `1` if `a > b`, otherwise assigns `0`
+    fn is_greater(
+        &self,
+        ctx: &mut RegionCtx<'_, F>,
+        a: &AssignedValue<F>,
+        b: &AssignedValue<F>,
+        abs_diff_upp_bit_count: usize,
+    ) -> Result<AssignedCondition<F>, Error> {
+        self.is_less(ctx, b, a, abs_diff_upp_bit_count)
+    }
+
+    /// Assigns a new bit flag to `1` if `a >= b`, otherwise assigns `0`
+    fn is_greater_eq(
+        &self,
+        ctx: &mut RegionCtx<'_, F>,
+        a: &AssignedValue<F>,
+        b: &AssignedValue<F>,
+        abs_diff_upp_bit_count: usize,
+    ) -> Result<AssignedCondition<F>, Error> {
+        self.is_less_eq(ctx, b, a, abs_diff_upp_bit_count)
+    }
+
     /// Assigns a new witness `r` as:
     /// `r = a + constant`
     fn add_constant(
@@ -1057,7 +1120,7 @@ pub trait MainGateInstructions<F: PrimeField, const WIDTH: usize>: Chip<F> {
                 chunk.insert(last_term_index, last_term);
 
                 CombinationOptionCommon::OneLinerAdd
-            // Intermediate round should accumulate the sum
+                // Intermediate round should accumulate the sum
             } else {
                 CombinationOptionCommon::CombineToNextAdd(F::ONE)
             };

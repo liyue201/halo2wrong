@@ -277,7 +277,7 @@ impl<F: PrimeField> MainGateInstructions<F, WIDTH> for MainGate<F> {
             CombinationOptionCommon::OneLinerAdd.into(),
         )?[1];
 
-        // cond * dif + b + a_or_b  = 0
+        // cond * dif + b - a_or_b  = 0
         let res = self
             .apply(
                 ctx,
@@ -1493,7 +1493,7 @@ mod tests {
                     for number_of_terms in 1..50 {
                         let constant = rand();
                         let terms = (0..number_of_terms)
-                            .map(|_| (Term::Unassigned(Value::known(rand()), rand())))
+                            .map(|_| Term::Unassigned(Value::known(rand()), rand()))
                             .collect::<Vec<Term<F>>>();
                         let expected = Term::compose(&terms, constant);
                         let expected = main_gate.assign_value(ctx, expected)?;
@@ -1607,6 +1607,106 @@ mod tests {
             Err(e) => panic!("{:#?}", e),
         };
 
+        assert_eq!(prover.verify(), Ok(()));
+    }
+
+    #[derive(Default)]
+    struct TestCircuitCmp<F: PrimeField> {
+        _marker: PhantomData<F>,
+    }
+
+    impl<F: PrimeField> Circuit<F> for TestCircuitCmp<F> {
+        type Config = TestCircuitConfig;
+        type FloorPlanner = SimpleFloorPlanner;
+        #[cfg(feature = "circuit-params")]
+        type Params = ();
+
+        fn without_witnesses(&self) -> Self {
+            Self::default()
+        }
+
+        fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
+            let main_gate_config = MainGate::<F>::configure(meta);
+            TestCircuitConfig { main_gate_config }
+        }
+
+        fn synthesize(
+            &self,
+            config: Self::Config,
+            mut layouter: impl Layouter<F>,
+        ) -> Result<(), Error> {
+            let main_gate = MainGate::<F> {
+                config: config.main_gate_config,
+                _marker: PhantomData,
+            };
+
+            layouter.assign_region(
+                || "less than test",
+                |region| {
+                    let offset = 0;
+                    let ctx = &mut RegionCtx::new(region, offset);
+
+                    // Test case: a < b
+                    let a_val = F::from(6u64);
+                    let b_val = F::from(7u64);
+                    let a = main_gate.assign_value(ctx, Value::known(a_val))?;
+                    let b = main_gate.assign_value(ctx, Value::known(b_val))?;
+                    let is_less = main_gate.is_less(ctx, &a, &b, 8 as usize)?;
+                    main_gate.assert_one(ctx, &is_less)?;
+                    let is_less_eq = main_gate.is_less_eq(ctx, &a, &b, 8 as usize)?;
+                    main_gate.assert_one(ctx, &is_less_eq)?;
+                    let is_greater = main_gate.is_greater(ctx, &a, &b, 8 as usize)?;
+                    main_gate.assert_zero(ctx, &is_greater)?;
+                    let is_greater_eq = main_gate.is_greater_eq(ctx, &a, &b, 8 as usize)?;
+                    main_gate.assert_zero(ctx, &is_greater_eq)?;
+
+                    // Test case: a > b
+                    let a_val = F::from(7u64);
+                    let b_val = F::from(6u64);
+                    let a = main_gate.assign_value(ctx, Value::known(a_val))?;
+                    let b = main_gate.assign_value(ctx, Value::known(b_val))?;
+                    let is_less = main_gate.is_less(ctx, &a, &b, 8 as usize)?;
+                    main_gate.assert_zero(ctx, &is_less)?;
+                    let is_less_eq = main_gate.is_less_eq(ctx, &a, &b, 8 as usize)?;
+                    main_gate.assert_zero(ctx, &is_less_eq)?;
+                    let is_greater = main_gate.is_greater(ctx, &a, &b, 8 as usize)?;
+                    main_gate.assert_one(ctx, &is_greater)?;
+                    let is_greater_eq = main_gate.is_greater_eq(ctx, &a, &b, 8 as usize)?;
+                    main_gate.assert_one(ctx, &is_greater_eq)?;
+
+                    // Test case: a = b
+                    let a_val = F::from(6u64);
+                    let b_val = F::from(6u64);
+                    let a = main_gate.assign_value(ctx, Value::known(a_val))?;
+                    let b = main_gate.assign_value(ctx, Value::known(b_val))?;
+                    let is_less = main_gate.is_less(ctx, &a, &b, 8 as usize)?;
+                    main_gate.assert_zero(ctx, &is_less)?;
+                    let is_less_eq = main_gate.is_less_eq(ctx, &a, &b, 8 as usize)?;
+                    main_gate.assert_one(ctx, &is_less_eq)?;
+                    let is_greater = main_gate.is_greater(ctx, &a, &b, 8 as usize)?;
+                    main_gate.assert_zero(ctx, &is_greater)?;
+                    let is_greater_eq = main_gate.is_greater_eq(ctx, &a, &b, 8 as usize)?;
+                    main_gate.assert_one(ctx, &is_greater_eq)?;
+                    Ok(())
+                },
+            )?;
+
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_cmp() {
+        const K: u32 = 10;
+        let circuit = TestCircuitCmp::<Fp> {
+            _marker: PhantomData,
+        };
+
+        let public_inputs = vec![vec![]];
+        let prover = match MockProver::run(K, &circuit, public_inputs) {
+            Ok(prover) => prover,
+            Err(e) => panic!("{:#?}", e),
+        };
         assert_eq!(prover.verify(), Ok(()));
     }
 }
